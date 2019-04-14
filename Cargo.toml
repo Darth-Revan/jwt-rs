@@ -12,8 +12,13 @@ keywords = ["api", "json", "web", "jwt", "token"]
 
 [dependencies]
 serde = "^1.0"
-serde_derive = "^1.0"
-serde_json = "^1.0"
+serde_derive = "^1"
+serde_json = "^1"
+openssl = ">=0.10.20"
+base64 = "^0.10"
+
+[dev-dependencies]
+lazy_static = "^1"
 
 [lib]
 name = "jwt_rs"
