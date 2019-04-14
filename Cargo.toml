@@ -24,6 +24,8 @@ lazy_static = "^1"
 name = "jwt_rs"
 path = "src/lib.rs"
 
+[features]
+no-ecdsa = []
 
 [profile.dev]
 opt-level = 0

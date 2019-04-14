@@ -27,14 +27,18 @@
 use crate::errors::{Error, ErrorKind, Result};
 use base64;
 use openssl::{
-    bn::BigNum,
-    ec,
-    ecdsa::EcdsaSig,
     hash,
-    nid::Nid,
     pkey,
     rsa,
     sign,
+};
+
+#[cfg(not(feature = "no-ecdsa"))]
+use openssl::{
+    bn::BigNum,
+    nid::Nid,
+    ec,
+    ecdsa::EcdsaSig
 };
 
 /// Enumeration of supported JWAs (JSON Web Algorithms) as described in RFC 7518
@@ -54,10 +58,13 @@ pub enum JsonWebAlgorithm {
     RS384,
     /// RSA PKCS#1 1.5 signature using SHA-512
     RS512,
+    #[cfg(not(feature = "no-ecdsa"))]
     /// ECDSA signature using the P-256 curve and SHA-256
     ES256,
+    #[cfg(not(feature = "no-ecdsa"))]
     /// ECDSA signature using the P-384 curve and SHA-384
     ES384,
+    #[cfg(not(feature = "no-ecdsa"))]
     /// ECDSA signature using the P-521 curve and SHA-512
     ES512,
     /// RSA PSS signature using SHA-256 for both data hashing and Mask Generation Function (MGF)
@@ -84,8 +91,11 @@ impl std::str::FromStr for JsonWebAlgorithm {
             "RS256" => Ok(JsonWebAlgorithm::RS256),
             "RS384" => Ok(JsonWebAlgorithm::RS384),
             "RS512" => Ok(JsonWebAlgorithm::RS512),
+            #[cfg(not(feature = "no-ecdsa"))]
             "ES256" => Ok(JsonWebAlgorithm::ES256),
+            #[cfg(not(feature = "no-ecdsa"))]
             "ES384" => Ok(JsonWebAlgorithm::ES384),
+            #[cfg(not(feature = "no-ecdsa"))]
             "ES512" => Ok(JsonWebAlgorithm::ES512),
             "PS256" => Ok(JsonWebAlgorithm::PS256),
             "PS384" => Ok(JsonWebAlgorithm::PS384),
@@ -195,6 +205,7 @@ fn sign_rsa_pss(algo: JsonWebAlgorithm, key: &[u8], input: &str) -> Result<Strin
     Ok(base64::encode_config(&signature, base64::URL_SAFE_NO_PAD))
 }
 
+#[cfg(not(feature = "no-ecdsa"))]
 /// Creates a signature using a ECDSA algorithm with fixed length.
 ///
 /// # Arguments
@@ -360,6 +371,7 @@ fn verify_rsa_pss(algo: JsonWebAlgorithm, key: &[u8], input: &str, signature: &s
     verifier.verify(&signature).map_err(|e| Error::new_without_msg(ErrorKind::OpenSSLError(e)))
 }
 
+#[cfg(not(feature = "no-ecdsa"))]
 /// Verifies a signature created using a ECDSA algorithm with fixed length.
 ///
 /// # Arguments
@@ -441,6 +453,7 @@ pub fn sign(input: &str, key: &[u8], algorithm: JsonWebAlgorithm) -> Result<Stri
         JsonWebAlgorithm::HS256 | JsonWebAlgorithm::HS384 | JsonWebAlgorithm::HS512 => sign_hmac(algorithm, key, input),
         JsonWebAlgorithm::RS256 | JsonWebAlgorithm::RS384 | JsonWebAlgorithm::RS512 => sign_rsa_pkcs(algorithm, key, input),
         JsonWebAlgorithm::PS256 | JsonWebAlgorithm::PS384 | JsonWebAlgorithm::PS512 => sign_rsa_pss(algorithm, key, input),
+        #[cfg(not(feature = "no-ecdsa"))]
         JsonWebAlgorithm::ES256 | JsonWebAlgorithm::ES384 | JsonWebAlgorithm::ES512 => sign_ecdsa(algorithm, key, input),
         JsonWebAlgorithm::None  => Ok(String::new()),
     }
@@ -474,6 +487,7 @@ pub fn verify(signature: &str, input: &str, key: &[u8], algorithm: JsonWebAlgori
         JsonWebAlgorithm::HS256 | JsonWebAlgorithm::HS384 | JsonWebAlgorithm::HS512 => verify_hmac(algorithm, key, input, signature),
         JsonWebAlgorithm::RS256 | JsonWebAlgorithm::RS384 | JsonWebAlgorithm::RS512 => verify_rsa_pkcs(algorithm, key, input, signature),
         JsonWebAlgorithm::PS256 | JsonWebAlgorithm::PS384 | JsonWebAlgorithm::PS512 => verify_rsa_pss(algorithm, key, input, signature),
+        #[cfg(not(feature = "no-ecdsa"))]
         JsonWebAlgorithm::ES256 | JsonWebAlgorithm::ES384 | JsonWebAlgorithm::ES512 => verify_ecdsa(algorithm, key, input, signature),
         _   => Ok(false)
     }
@@ -488,13 +502,22 @@ mod tests {
     const RSA_PRIVATE_KEY_FILE: &'static str = "testdata/rsa_priv.pem";
     const RSA_OTHER_PUBLIC_KEY_FILE: &'static str = "testdata/rsa_other_pub.pem";
     const RSA_OTHER_PRIVATE_KEY_FILE: &'static str = "testdata/rsa_other_priv.pem";
+
+    #[cfg(not(feature = "no-ecdsa"))]
     const EC_PUBLIC_KEY_FILE: &'static str = "testdata/ec_pub.pem";
+    #[cfg(not(feature = "no-ecdsa"))]
     const EC_PRIVATE_KEY_FILE: &'static str = "testdata/ec_priv.pem";
+    #[cfg(not(feature = "no-ecdsa"))]
     const EC_OTHER_PUBLIC_KEY_FILE: &'static str = "testdata/ec_other_pub.pem";
+    #[cfg(not(feature = "no-ecdsa"))]
     const EC_OTHER_PRIVATE_KEY_FILE: &'static str = "testdata/ec_other_priv.pem";
+    #[cfg(not(feature = "no-ecdsa"))]
     const EC_OTHER_CURVE_PUBLIC_KEY_FILE: &'static str = "testdata/ec_other_curve_pub.pem";
+    #[cfg(not(feature = "no-ecdsa"))]
     const EC_OTHER_CURVE_PRIVATE_KEY_FILE: &'static str = "testdata/ec_other_curve_priv.pem";
+    #[cfg(not(feature = "no-ecdsa"))]
     const EC_521_PUBLIC_KEY_FILE: &'static str = "testdata/ec_521_pub.pem";
+    #[cfg(not(feature = "no-ecdsa"))]
     const EC_521_PRIVATE_KEY_FILE: &'static str = "testdata/ec_521_priv.pem";
 
     // A short helper method for reading and returning the plain contents of a file
@@ -579,8 +602,8 @@ mod tests {
             assert!(v.is_err());
             let v = verify(&signature, message, key, JsonWebAlgorithm::PS256);
             assert!(v.is_err());
-            let v = verify(&signature, message, key, JsonWebAlgorithm::ES256);
-            assert!(v.is_err());
+            #[cfg(not(feature = "no-ecdsa"))]
+            assert!(verify(&signature, message, key, JsonWebAlgorithm::ES256).is_err());
             Ok(())
         }
     }
@@ -648,8 +671,10 @@ mod tests {
         fn fail_wrong_algo() -> Result<()> {
             let message = "Hello World";
             let signature = sign(message, PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::RS256)?;
-            let v = verify(&signature, message, PUBLIC_KEY.as_bytes(), JsonWebAlgorithm::ES256);
-            assert!(v.is_err());
+
+            #[cfg(not(feature = "no-ecdsa"))]
+            assert!(verify(&signature, message, PUBLIC_KEY.as_bytes(), JsonWebAlgorithm::ES256).is_err());
+
             let v = verify(&signature, message, PUBLIC_KEY.as_bytes(), JsonWebAlgorithm::PS256);
             assert!(v.is_ok());
             assert!(!v.unwrap());
@@ -723,8 +748,10 @@ mod tests {
         fn fail_wrong_algo() -> Result<()> {
             let message = "Hello World";
             let signature = sign(message, PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::PS256)?;
-            let v = verify(&signature, message, PUBLIC_KEY.as_bytes(), JsonWebAlgorithm::ES256);
-            assert!(v.is_err());
+
+            #[cfg(not(feature = "no-ecdsa"))]
+            assert!(verify(&signature, message, PUBLIC_KEY.as_bytes(), JsonWebAlgorithm::ES256).is_err());
+
             let v = verify(&signature, message, PUBLIC_KEY.as_bytes(), JsonWebAlgorithm::RS256);
             assert!(v.is_ok());
             assert!(!v.unwrap());
@@ -735,6 +762,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(feature = "no-ecdsa"))]
     mod ecdsa {
         use super::*;
 
@@ -819,6 +847,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(feature = "no-ecdsa"))]
     mod ecdsa_p521 {
         use super::*;
 
