@@ -24,7 +24,7 @@
 //! signatures used by JWTs. Essentially wraps the respective functions
 //! provided by `ring`.
 
-use crate::errors::{Error, ErrorKind, Result};
+use crate::errors::{JwtError, JwtResult};
 use base64;
 use openssl::{
     hash,
@@ -82,8 +82,8 @@ impl Default for JsonWebAlgorithm {
 }
 
 impl std::str::FromStr for JsonWebAlgorithm {
-    type Err = Error;
-    fn from_str(s: &str) -> Result<Self> {
+    type Err = JwtError;
+    fn from_str(s: &str) -> JwtResult<Self> {
         match s {
             "HS256" => Ok(JsonWebAlgorithm::HS256),
             "HS384" => Ok(JsonWebAlgorithm::HS384),
@@ -100,7 +100,7 @@ impl std::str::FromStr for JsonWebAlgorithm {
             "PS256" => Ok(JsonWebAlgorithm::PS256),
             "PS384" => Ok(JsonWebAlgorithm::PS384),
             "PS512" => Ok(JsonWebAlgorithm::PS512),
-            _       => Err(Error::new(ErrorKind::UnkownAlgorithm, "The requested algorithm is either not valid or not supported by this crate!"))
+            _       => Err(JwtError::UnknownAlgorithm)
         }
     }
 }
@@ -117,12 +117,12 @@ impl std::str::FromStr for JsonWebAlgorithm {
 /// # Errors
 /// Returns an error if specifying a signature algorithm that is not based on
 /// a HMAC.
-fn sign_hmac(algo: JsonWebAlgorithm, key: &[u8], input: &str) -> Result<String> {
+fn sign_hmac(algo: JsonWebAlgorithm, key: &[u8], input: &str) -> JwtResult<String> {
     let algo = match algo {
         JsonWebAlgorithm::HS256 => hash::MessageDigest::sha256(),
         JsonWebAlgorithm::HS384 => hash::MessageDigest::sha384(),
         JsonWebAlgorithm::HS512 => hash::MessageDigest::sha512(),
-        _                       => fail!(ErrorKind::UnkownAlgorithm, "The requested algorithm is not a valid HMAC algorithm.")
+        _                       => fail!(JwtError::InvalidAlgorithm)
     };
     let signing_key = pkey::PKey::hmac(key)?;
     let mut signer = sign::Signer::new(algo, &signing_key)?;
@@ -144,12 +144,12 @@ fn sign_hmac(algo: JsonWebAlgorithm, key: &[u8], input: &str) -> Result<String> 
 /// Returns an error if specifying a signature algorithm that is not based on
 /// RSA PKCS#1 1.5 or if OpenSSL fails to parse the input key as PEM encoded
 /// private key.
-fn sign_rsa_pkcs(algo: JsonWebAlgorithm, key: &[u8], input: &str) -> Result<String> {
+fn sign_rsa_pkcs(algo: JsonWebAlgorithm, key: &[u8], input: &str) -> JwtResult<String> {
     let algo = match algo {
         JsonWebAlgorithm::RS256 => hash::MessageDigest::sha256(),
         JsonWebAlgorithm::RS384 => hash::MessageDigest::sha384(),
         JsonWebAlgorithm::RS512 => hash::MessageDigest::sha512(),
-        _                       => fail!(ErrorKind::UnkownAlgorithm, "The requested algorithm is not a flavor of RSA with PKCS#1 padding.")
+        _                       => fail!(JwtError::InvalidAlgorithm)
     };
 
     let signing_key = rsa::Rsa::private_key_from_pem(key)?;
@@ -157,7 +157,7 @@ fn sign_rsa_pkcs(algo: JsonWebAlgorithm, key: &[u8], input: &str) -> Result<Stri
 
     // Requirement from RFC 7518
     if signing_key.bits() < 2048 {
-        fail!(ErrorKind::InvalidKey, "The key for signing is required to have at least 2048 bits.");
+        fail!(JwtError::InvalidKey);
     }
 
     let mut signer = sign::Signer::new(algo, &signing_key)?;
@@ -180,12 +180,12 @@ fn sign_rsa_pkcs(algo: JsonWebAlgorithm, key: &[u8], input: &str) -> Result<Stri
 /// Returns an error if specifying a signature algorithm that is not based on
 /// RSA PSS or if OpenSSL fails to parse the input key as PEM encoded
 /// private key.
-fn sign_rsa_pss(algo: JsonWebAlgorithm, key: &[u8], input: &str) -> Result<String> {
+fn sign_rsa_pss(algo: JsonWebAlgorithm, key: &[u8], input: &str) -> JwtResult<String> {
     let algo = match algo {
         JsonWebAlgorithm::PS256 => hash::MessageDigest::sha256(),
         JsonWebAlgorithm::PS384 => hash::MessageDigest::sha384(),
         JsonWebAlgorithm::PS512 => hash::MessageDigest::sha512(),
-        _                       => fail!(ErrorKind::UnkownAlgorithm, "The requested algorithm is not a flavor of RSA with PSS Padding.")
+        _                       => fail!(JwtError::InvalidAlgorithm)
     };
 
     let signing_key = rsa::Rsa::private_key_from_pem(key)?;
@@ -193,7 +193,7 @@ fn sign_rsa_pss(algo: JsonWebAlgorithm, key: &[u8], input: &str) -> Result<Strin
 
     // Requirement from RFC 7518
     if signing_key.bits() < 2048 {
-        fail!(ErrorKind::InvalidKey, "The key for signing is required to have at least 2048 bits.");
+        fail!(JwtError::InvalidKey);
     }
 
     let mut signer = sign::Signer::new(algo, &signing_key)?;
@@ -222,27 +222,25 @@ fn sign_rsa_pss(algo: JsonWebAlgorithm, key: &[u8], input: &str) -> Result<Strin
 /// * the private key's curve degree does not match the degree expected for the chosen `algo`
 /// * the curve used to create the private key is not supported (not NIST P-256 or P-384)
 /// * either hashing of the input data or signing the hash fails
-fn sign_ecdsa(algo: JsonWebAlgorithm, key: &[u8], input: &str) -> Result<String> {
+fn sign_ecdsa(algo: JsonWebAlgorithm, key: &[u8], input: &str) -> JwtResult<String> {
 
     // NIST P-256 and P-384 are called prime256v1 and secp384r1 in OpenSSL
     let (hash_algo, req_octets, req_degree, req_curve) = match algo {
         JsonWebAlgorithm::ES256 => (hash::MessageDigest::sha256(), 32usize, 256, Nid::X9_62_PRIME256V1),
         JsonWebAlgorithm::ES384 => (hash::MessageDigest::sha384(), 48usize, 384, Nid::SECP384R1),
         JsonWebAlgorithm::ES512 => (hash::MessageDigest::sha512(), 66usize, 521, Nid::SECP521R1),
-        _                       => fail!(ErrorKind::UnkownAlgorithm, "The requested algorithm is not a supported flavor of ECDSA.")
+        _                       => fail!(JwtError::InvalidAlgorithm)
     };
     let private_key = ec::EcKey::private_key_from_pem(key)?;
     let private_key_group = private_key.group();
 
     if private_key_group.degree() != req_degree {
-        fail!(ErrorKind::InvalidKey, format!("Expected an ECDSA key with a degree of {}.", req_degree));
+        fail!(JwtError::InvalidKey);
     }
 
-    let private_key_curve = private_key_group.curve_name().ok_or(
-        Error::new(ErrorKind::InvalidKey, "Failed to get name of elliptic curve from key.")
-    )?;
+    let private_key_curve = private_key_group.curve_name().ok_or(JwtError::InvalidKey)?;
     if private_key_curve != req_curve {
-        fail!(ErrorKind::InvalidKey, format!("Expected a key for NIST P-256 or P-384, but got {}.", Nid::long_name(&private_key_curve).unwrap_or("")))
+        fail!(JwtError::InvalidKey);
     }
 
     // we use the low level bindings here because we need r and s directly; with the high level interface we get a
@@ -276,7 +274,7 @@ fn sign_ecdsa(algo: JsonWebAlgorithm, key: &[u8], input: &str) -> Result<String>
 /// success, or an error if the specified algorithm is not based on a HMAC
 /// # Errors
 /// Returns an error type if the specified algorithm is not based on a HMAC.
-fn verify_hmac(algo: JsonWebAlgorithm, key: &[u8], input: &str, signature: &str) -> Result<bool> {
+fn verify_hmac(algo: JsonWebAlgorithm, key: &[u8], input: &str, signature: &str) -> JwtResult<bool> {
     // sadly, in rust-openssl we cannot use sign::Verifier for HMACs (https://docs.rs/openssl/0.10.20/openssl/sign/index.html),
     // so we simply calc the new HMAC and compare them
     let new_sig = sign_hmac(algo, key, input)?;
@@ -307,13 +305,13 @@ fn verify_hmac(algo: JsonWebAlgorithm, key: &[u8], input: &str, signature: &str)
 /// * the specified algorithm is not a variant of RSA PKCS#1
 /// * `key` is not a PEM encoded public key or has an invalid lenght
 /// * the verification of the signature fails with an error
-fn verify_rsa_pkcs(algo: JsonWebAlgorithm, key: &[u8], input: &str, signature: &str) -> Result<bool> {
+fn verify_rsa_pkcs(algo: JsonWebAlgorithm, key: &[u8], input: &str, signature: &str) -> JwtResult<bool> {
     let signature = base64::decode_config(signature, base64::URL_SAFE_NO_PAD)?;
     let algo = match algo {
         JsonWebAlgorithm::RS256 => hash::MessageDigest::sha256(),
         JsonWebAlgorithm::RS384 => hash::MessageDigest::sha384(),
         JsonWebAlgorithm::RS512 => hash::MessageDigest::sha512(),
-        _                       => fail!(ErrorKind::UnkownAlgorithm, "The requested algorithm is not a flavor of RSA with PSS Padding.")
+        _                       => fail!(JwtError::InvalidAlgorithm)
     };
 
     let key = rsa::Rsa::public_key_from_pem(key)?;
@@ -321,13 +319,13 @@ fn verify_rsa_pkcs(algo: JsonWebAlgorithm, key: &[u8], input: &str, signature: &
 
     // Requirement from RFC 7518
     if key.bits() < 2048 {
-        fail!(ErrorKind::InvalidKey, "The key for verification is required to have at least 2048 bits.");
+        fail!(JwtError::InvalidKey);
     }
 
     let mut verifier = sign::Verifier::new(algo, &key)?;
     verifier.set_rsa_padding(rsa::Padding::PKCS1)?;
     verifier.update(input.as_bytes())?;
-    verifier.verify(&signature).map_err(|e| Error::new_without_msg(ErrorKind::OpenSSLError(e)))
+    verifier.verify(&signature).map_err(|e| JwtError::OpenSSLError(e))
 }
 
 /// Verifies a signature creating using the RSA PSS algorithm.
@@ -346,13 +344,13 @@ fn verify_rsa_pkcs(algo: JsonWebAlgorithm, key: &[u8], input: &str, signature: &
 /// * the specified algorithm is not a variant of RSA PSS
 /// * `key` is not a PEM encoded public key or has an invalid lenght
 /// * the verification of the signature fails with an error
-fn verify_rsa_pss(algo: JsonWebAlgorithm, key: &[u8], input: &str, signature: &str) -> Result<bool> {
+fn verify_rsa_pss(algo: JsonWebAlgorithm, key: &[u8], input: &str, signature: &str) -> JwtResult<bool> {
     let signature = base64::decode_config(signature, base64::URL_SAFE_NO_PAD)?;
     let algo = match algo {
         JsonWebAlgorithm::PS256 => hash::MessageDigest::sha256(),
         JsonWebAlgorithm::PS384 => hash::MessageDigest::sha384(),
         JsonWebAlgorithm::PS512 => hash::MessageDigest::sha512(),
-        _                       => fail!(ErrorKind::UnkownAlgorithm, "The requested algorithm is not a flavor of RSA with PSS Padding.")
+        _                       => fail!(JwtError::InvalidAlgorithm)
     };
 
     let key = rsa::Rsa::public_key_from_pem(key)?;
@@ -360,7 +358,7 @@ fn verify_rsa_pss(algo: JsonWebAlgorithm, key: &[u8], input: &str, signature: &s
 
     // Requirement from RFC 7518
     if key.bits() < 2048 {
-        fail!(ErrorKind::InvalidKey, "The key for verification is required to have at least 2048 bits.");
+        fail!(JwtError::InvalidKey);
     }
 
     let mut verifier = sign::Verifier::new(algo, &key)?;
@@ -368,7 +366,7 @@ fn verify_rsa_pss(algo: JsonWebAlgorithm, key: &[u8], input: &str, signature: &s
     verifier.set_rsa_pss_saltlen(sign::RsaPssSaltlen::DIGEST_LENGTH)?;
     verifier.set_rsa_mgf1_md(algo)?;
     verifier.update(input.as_bytes())?;
-    verifier.verify(&signature).map_err(|e| Error::new_without_msg(ErrorKind::OpenSSLError(e)))
+    verifier.verify(&signature).map_err(|e| JwtError::OpenSSLError(e))
 }
 
 #[cfg(not(feature = "no-ecdsa"))]
@@ -390,14 +388,14 @@ fn verify_rsa_pss(algo: JsonWebAlgorithm, key: &[u8], input: &str, signature: &s
 /// * the public key's curve degree does not match the degree expected for the chosen `algo`
 /// * the curve used to create the public key is not supported (not NIST P-256 or P-384)
 /// * either hashing of the input data or signing the hash fails
-fn verify_ecdsa(algo: JsonWebAlgorithm, key: &[u8], input: &str, signature: &str) -> Result<bool> {
+fn verify_ecdsa(algo: JsonWebAlgorithm, key: &[u8], input: &str, signature: &str) -> JwtResult<bool> {
     let signature = base64::decode_config(signature, base64::URL_SAFE_NO_PAD)?;
 
     let (hash_algo, req_octets, req_degree, req_curve) = match algo {
         JsonWebAlgorithm::ES256 => (hash::MessageDigest::sha256(), 32usize, 256, Nid::X9_62_PRIME256V1),
         JsonWebAlgorithm::ES384 => (hash::MessageDigest::sha384(), 48usize, 384, Nid::SECP384R1),
         JsonWebAlgorithm::ES512 => (hash::MessageDigest::sha512(), 66usize, 521, Nid::SECP521R1),
-        _                       => fail!(ErrorKind::UnkownAlgorithm, "The requested algorithm is not a supported flavor of ECDSA.")
+        _                       => fail!(JwtError::InvalidAlgorithm)
     };
 
     let public_key = pkey::PKey::public_key_from_pem(key)?;
@@ -405,18 +403,16 @@ fn verify_ecdsa(algo: JsonWebAlgorithm, key: &[u8], input: &str, signature: &str
 
     let public_key_group = public_key.group();
     if public_key_group.degree() != req_degree {
-        fail!(ErrorKind::InvalidKey, format!("Expected an ECDSA key with a degree of {}.", req_degree));
+        fail!(JwtError::InvalidKey);
     }
 
-    let public_key_curve = public_key_group.curve_name().ok_or(
-        Error::new(ErrorKind::InvalidKey, "Failed to get name of elliptic curve from key.")
-    )?;
+    let public_key_curve = public_key_group.curve_name().ok_or(JwtError::InvalidKey)?;
     if public_key_curve != req_curve {
-        fail!(ErrorKind::InvalidKey, format!("Expected a key for NIST P-256 or P-384, but got {}.", Nid::long_name(&public_key_curve).unwrap_or("")))
+        fail!(JwtError::InvalidKey);
     }
 
     if signature.len() != (req_octets * 2) {
-        fail!(ErrorKind::InvalidSignature, "The signature has an invalid length.");
+        fail!(JwtError::InvalidSignature);
     }
 
     let signature = signature.split_at(signature.len() / 2);
@@ -424,7 +420,7 @@ fn verify_ecdsa(algo: JsonWebAlgorithm, key: &[u8], input: &str, signature: &str
 
     let signature = EcdsaSig::from_private_components(r, s)?;
     let data = hash::hash(hash_algo, input.as_bytes())?;
-    signature.verify(&data, &public_key).map_err(|e| Error::new_without_msg(ErrorKind::OpenSSLError(e)))
+    signature.verify(&data, &public_key).map_err(|e| JwtError::OpenSSLError(e))
 }
 
 /// Creates and returns a digital signature on some input using a JSON Web
@@ -448,7 +444,7 @@ fn verify_ecdsa(algo: JsonWebAlgorithm, key: &[u8], input: &str, signature: &str
 /// let signature = sign("Hello World", key, JsonWebAlgorithm::HS256);
 /// println!("{:?}", signature);
 /// ```
-pub fn sign(input: &str, key: &[u8], algorithm: JsonWebAlgorithm) -> Result<String> {
+pub fn sign(input: &str, key: &[u8], algorithm: JsonWebAlgorithm) -> JwtResult<String> {
     match algorithm {
         JsonWebAlgorithm::HS256 | JsonWebAlgorithm::HS384 | JsonWebAlgorithm::HS512 => sign_hmac(algorithm, key, input),
         JsonWebAlgorithm::RS256 | JsonWebAlgorithm::RS384 | JsonWebAlgorithm::RS512 => sign_rsa_pkcs(algorithm, key, input),
@@ -481,7 +477,7 @@ pub fn sign(input: &str, key: &[u8], algorithm: JsonWebAlgorithm) -> Result<Stri
 /// let signature = sign("Hello World", key, JsonWebAlgorithm::HS256);
 /// println!("{:?}", signature);
 /// ```
-pub fn verify(signature: &str, input: &str, key: &[u8], algorithm: JsonWebAlgorithm) -> Result<bool> {
+pub fn verify(signature: &str, input: &str, key: &[u8], algorithm: JsonWebAlgorithm) -> JwtResult<bool> {
     match algorithm {
         JsonWebAlgorithm::None if signature.is_empty()  => Ok(true),
         JsonWebAlgorithm::HS256 | JsonWebAlgorithm::HS384 | JsonWebAlgorithm::HS512 => verify_hmac(algorithm, key, input, signature),
@@ -529,7 +525,7 @@ mod tests {
     }
 
     #[test]
-    fn sign_verify_none() -> Result<()> {
+    fn sign_verify_none() -> JwtResult<()> {
         let message = "Hello World";
         let signature = sign(message, b"doesnmatter", JsonWebAlgorithm::None)?;
         assert!(signature.is_empty());
@@ -538,7 +534,7 @@ mod tests {
     }
 
     #[test]
-    fn sign_verify_different_algo() -> Result<()> {
+    fn sign_verify_different_algo() -> JwtResult<()> {
         let message = "Hello World";
         let signature = sign(message, b"secret", JsonWebAlgorithm::HS256)?;
         assert!(!signature.is_empty());
@@ -550,7 +546,7 @@ mod tests {
         use super::*;
 
         #[test]
-        fn success() -> Result<()> {
+        fn success() -> JwtResult<()> {
             let key = b"mysupersecretkey";
             let message = "Hello World";
             let signature = sign(message, key, JsonWebAlgorithm::HS256)?;
@@ -561,7 +557,7 @@ mod tests {
         }
 
         #[test]
-        fn fail_stripped_signature() -> Result<()> {
+        fn fail_stripped_signature() -> JwtResult<()> {
             let key = b"secret";
             let message = "Hello World";
             let signature = sign(message, key, JsonWebAlgorithm::HS256)?;
@@ -572,7 +568,7 @@ mod tests {
         }
 
         #[test]
-        fn fail_wrong_key() -> Result<()> {
+        fn fail_wrong_key() -> JwtResult<()> {
             let key = b"mysupersecretkey";
             let message = "Hello World";
             let signature = sign(message, key, JsonWebAlgorithm::HS256)?;
@@ -583,7 +579,7 @@ mod tests {
         }
 
         #[test]
-        fn fail_wrong_msg() -> Result<()> {
+        fn fail_wrong_msg() -> JwtResult<()> {
             let key = b"mysupersecretkey";
             let message = "Hello World";
             let signature = sign(message, key, JsonWebAlgorithm::HS256)?;
@@ -594,7 +590,7 @@ mod tests {
         }
 
         #[test]
-        fn fail_wrong_length_algo() -> Result<()> {
+        fn fail_wrong_length_algo() -> JwtResult<()> {
             let key = b"mysupersecretkey";
             let message = "Hello World";
             let signature = sign(message, key, JsonWebAlgorithm::HS256)?;
@@ -605,7 +601,7 @@ mod tests {
         }
 
         #[test]
-        fn fail_wrong_algo() -> Result<()> {
+        fn fail_wrong_algo() -> JwtResult<()> {
             let key = b"mysupersecretkey";
             let message = "Hello World";
             let signature = sign(message, key, JsonWebAlgorithm::HS256)?;
@@ -630,7 +626,7 @@ mod tests {
         }
 
         #[test]
-        fn success() -> Result<()> {
+        fn success() -> JwtResult<()> {
             let message = "Hello World";
             let signature = sign(message, PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::RS256)?;
             assert!(!signature.is_empty());
@@ -640,7 +636,7 @@ mod tests {
         }
 
         #[test]
-        fn fail_stripped_signature() -> Result<()> {
+        fn fail_stripped_signature() -> JwtResult<()> {
             let message = "Hello World";
             let signature = sign(message, PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::RS256)?;
             assert!(!signature.is_empty());
@@ -650,7 +646,7 @@ mod tests {
         }
 
         #[test]
-        fn fail_wrong_verification_key() -> Result<()> {
+        fn fail_wrong_verification_key() -> JwtResult<()> {
             let message = "Hello World";
             let signature = sign(message, PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::RS256)?;
             let v = verify(&signature, message, OTHER_PUBLIC_KEY.as_bytes(), JsonWebAlgorithm::RS256);
@@ -660,7 +656,7 @@ mod tests {
         }
 
         #[test]
-        fn fail_wrong_signing_key() -> Result<()> {
+        fn fail_wrong_signing_key() -> JwtResult<()> {
             let message = "Hello World";
             let signature = sign(message, OTHER_PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::RS256)?;
             let v = verify(&signature, message, PUBLIC_KEY.as_bytes(), JsonWebAlgorithm::RS256);
@@ -670,7 +666,7 @@ mod tests {
         }
 
         #[test]
-        fn fail_wrong_msg() -> Result<()> {
+        fn fail_wrong_msg() -> JwtResult<()> {
             let signature = sign("Hello World", PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::RS256)?;
             let v = verify(&signature, "Hello Worlb", PUBLIC_KEY.as_bytes(), JsonWebAlgorithm::RS256);
             assert!(v.is_ok());
@@ -679,7 +675,7 @@ mod tests {
         }
 
         #[test]
-        fn fail_wrong_length_algo() -> Result<()> {
+        fn fail_wrong_length_algo() -> JwtResult<()> {
             let message = "Hello World";
             let signature = sign(message, PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::RS256)?;
             let v = verify(&signature, message, PUBLIC_KEY.as_bytes(), JsonWebAlgorithm::RS384);
@@ -689,7 +685,7 @@ mod tests {
         }
 
         #[test]
-        fn fail_wrong_algo() -> Result<()> {
+        fn fail_wrong_algo() -> JwtResult<()> {
             let message = "Hello World";
             let signature = sign(message, PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::RS256)?;
 
@@ -717,7 +713,7 @@ mod tests {
         }
 
         #[test]
-        fn success() -> Result<()> {
+        fn success() -> JwtResult<()> {
             let message = "Hello World";
             let signature = sign(message, PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::PS256)?;
             assert!(!signature.is_empty());
@@ -727,7 +723,7 @@ mod tests {
         }
 
         #[test]
-        fn fail_stripped_signature() -> Result<()> {
+        fn fail_stripped_signature() -> JwtResult<()> {
             let message = "Hello World";
             let signature = sign(message, PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::PS256)?;
             assert!(!signature.is_empty());
@@ -737,7 +733,7 @@ mod tests {
         }
 
         #[test]
-        fn fail_wrong_verification_key() -> Result<()> {
+        fn fail_wrong_verification_key() -> JwtResult<()> {
             let message = "Hello World";
             let signature = sign(message, PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::PS256)?;
             let v = verify(&signature, message, OTHER_PUBLIC_KEY.as_bytes(), JsonWebAlgorithm::PS256);
@@ -747,7 +743,7 @@ mod tests {
         }
 
         #[test]
-        fn fail_wrong_signing_key() -> Result<()> {
+        fn fail_wrong_signing_key() -> JwtResult<()> {
             let message = "Hello World";
             let signature = sign(message, OTHER_PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::PS256)?;
             let v = verify(&signature, message, PUBLIC_KEY.as_bytes(), JsonWebAlgorithm::PS256);
@@ -757,7 +753,7 @@ mod tests {
         }
 
         #[test]
-        fn fail_wrong_msg() -> Result<()> {
+        fn fail_wrong_msg() -> JwtResult<()> {
             let signature = sign("Hello World", PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::PS256)?;
             let v = verify(&signature, "Hello Worlb", PUBLIC_KEY.as_bytes(), JsonWebAlgorithm::PS256);
             assert!(v.is_ok());
@@ -766,7 +762,7 @@ mod tests {
         }
 
         #[test]
-        fn fail_wrong_length_algo() -> Result<()> {
+        fn fail_wrong_length_algo() -> JwtResult<()> {
             let message = "Hello World";
             let signature = sign(message, PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::PS256)?;
             let v = verify(&signature, message, PUBLIC_KEY.as_bytes(), JsonWebAlgorithm::PS384);
@@ -776,7 +772,7 @@ mod tests {
         }
 
         #[test]
-        fn fail_wrong_algo() -> Result<()> {
+        fn fail_wrong_algo() -> JwtResult<()> {
             let message = "Hello World";
             let signature = sign(message, PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::PS256)?;
 
@@ -807,7 +803,7 @@ mod tests {
         }
 
         #[test]
-        fn success() -> Result<()> {
+        fn success() -> JwtResult<()> {
             let message = "Hello World";
             let signature = sign(message, PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::ES256)?;
             assert!(!signature.is_empty());
@@ -817,7 +813,7 @@ mod tests {
         }
 
         #[test]
-        fn fail_stripped_signature() -> Result<()> {
+        fn fail_stripped_signature() -> JwtResult<()> {
             let message = "Hello World";
             let signature = sign(message, PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::ES256)?;
             assert!(!signature.is_empty());
@@ -827,7 +823,7 @@ mod tests {
         }
 
         #[test]
-        fn fail_wrong_verification_key() -> Result<()> {
+        fn fail_wrong_verification_key() -> JwtResult<()> {
             let message = "Hello World";
             let signature = sign(message, PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::ES256)?;
             let v = verify(&signature, message, OTHER_PUBLIC_KEY.as_bytes(), JsonWebAlgorithm::ES256);
@@ -837,7 +833,7 @@ mod tests {
         }
 
         #[test]
-        fn fail_wrong_curve() -> Result<()> {
+        fn fail_wrong_curve() -> JwtResult<()> {
             let message = "Hello World";
             let signature = sign(message, PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::ES256)?;
             let v = verify(&signature, message, OTHER_CURVE_PUBLIC_KEY.as_bytes(), JsonWebAlgorithm::ES256);
@@ -846,7 +842,7 @@ mod tests {
         }
 
         #[test]
-        fn fail_wrong_signing_key() -> Result<()> {
+        fn fail_wrong_signing_key() -> JwtResult<()> {
             let message = "Hello World";
             let signature = sign(message, OTHER_PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::ES256)?;
             let v = verify(&signature, message, PUBLIC_KEY.as_bytes(), JsonWebAlgorithm::ES256);
@@ -856,7 +852,7 @@ mod tests {
         }
 
         #[test]
-        fn fail_wrong_msg() -> Result<()> {
+        fn fail_wrong_msg() -> JwtResult<()> {
             let signature = sign("Hello World", PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::ES256)?;
             let v = verify(&signature, "Hello Worlb", PUBLIC_KEY.as_bytes(), JsonWebAlgorithm::ES256);
             assert!(v.is_ok());
@@ -865,7 +861,7 @@ mod tests {
         }
 
         #[test]
-        fn fail_wrong_length_algo() -> Result<()> {
+        fn fail_wrong_length_algo() -> JwtResult<()> {
             let message = "Hello World";
             let signature = sign(message, PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::ES256)?;
             let v = verify(&signature, message, PUBLIC_KEY.as_bytes(), JsonWebAlgorithm::ES384);
@@ -874,7 +870,7 @@ mod tests {
         }
 
         #[test]
-        fn fail_wrong_algo() -> Result<()> {
+        fn fail_wrong_algo() -> JwtResult<()> {
             let message = "Hello World";
             let signature = sign(message, PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::ES256)?;
             let v = verify(&signature, message, PUBLIC_KEY.as_bytes(), JsonWebAlgorithm::PS256);
@@ -902,7 +898,7 @@ mod tests {
         }
 
         #[test]
-        fn success() -> Result<()> {
+        fn success() -> JwtResult<()> {
             let message = "Hello World";
             let signature = sign(message, PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::ES512)?;
             assert!(!signature.is_empty());
@@ -912,7 +908,7 @@ mod tests {
         }
 
         #[test]
-        fn fail_stripped_signature() -> Result<()> {
+        fn fail_stripped_signature() -> JwtResult<()> {
             let message = "Hello World";
             let signature = sign(message, PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::ES512)?;
             assert!(!signature.is_empty());
@@ -922,7 +918,7 @@ mod tests {
         }
 
         #[test]
-        fn fail_wrong_verification_key() -> Result<()> {
+        fn fail_wrong_verification_key() -> JwtResult<()> {
             let message = "Hello World";
             let signature = sign(message, PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::ES512)?;
             let v = verify(&signature, message, OTHER_PUBLIC_KEY.as_bytes(), JsonWebAlgorithm::ES256);
@@ -931,7 +927,7 @@ mod tests {
         }
 
         #[test]
-        fn fail_wrong_curve() -> Result<()> {
+        fn fail_wrong_curve() -> JwtResult<()> {
             let message = "Hello World";
             let signature = sign(message, PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::ES512)?;
             let v = verify(&signature, message, OTHER_CURVE_PUBLIC_KEY.as_bytes(), JsonWebAlgorithm::ES512);
@@ -940,7 +936,7 @@ mod tests {
         }
 
         #[test]
-        fn fail_wrong_signing_key() -> Result<()> {
+        fn fail_wrong_signing_key() -> JwtResult<()> {
             let message = "Hello World";
             let signature = sign(message, OTHER_PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::ES256)?;
             let v = verify(&signature, message, PUBLIC_KEY.as_bytes(), JsonWebAlgorithm::ES512);
@@ -949,7 +945,7 @@ mod tests {
         }
 
         #[test]
-        fn fail_wrong_msg() -> Result<()> {
+        fn fail_wrong_msg() -> JwtResult<()> {
             let signature = sign("Hello World", PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::ES512)?;
             let v = verify(&signature, "Hello Worlb", PUBLIC_KEY.as_bytes(), JsonWebAlgorithm::ES512);
             assert!(v.is_ok());
@@ -958,7 +954,7 @@ mod tests {
         }
 
         #[test]
-        fn fail_wrong_length_algo() -> Result<()> {
+        fn fail_wrong_length_algo() -> JwtResult<()> {
             let message = "Hello World";
             let signature = sign(message, PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::ES512)?;
             let v = verify(&signature, message, PUBLIC_KEY.as_bytes(), JsonWebAlgorithm::ES384);
@@ -967,7 +963,7 @@ mod tests {
         }
 
         #[test]
-        fn fail_wrong_algo() -> Result<()> {
+        fn fail_wrong_algo() -> JwtResult<()> {
             let message = "Hello World";
             let signature = sign(message, PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::ES512)?;
             let v = verify(&signature, message, PUBLIC_KEY.as_bytes(), JsonWebAlgorithm::PS256);

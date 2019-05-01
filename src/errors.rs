@@ -24,39 +24,32 @@
 //! when using this library.
 
 use std::str::Utf8Error;
-use std::error::Error as StdError;
 
 macro_rules! fail {
-    ($k:expr, $msg:expr) => {
-        return Err(crate::errors::Error::new($k, $msg));
+    ($e:expr) => {
+        return Err($e);
     };
 }
 
-/// Enumeration of error types
+/// Enumeration of custom errors
 #[derive(Debug)]
-pub enum ErrorKind {
+pub enum JwtError {
     /// The token to parse does not have a valid JWT format
     InvalidTokenFormat,
     /// The signature is not valid for the payload
     InvalidSignature,
-    /// An unsupported algorithm is requested
-    UnkownAlgorithm,
     /// The token has expired (_exp_ claim)
-    SignatureExpired,
-    /// One or more errors occurred in OpenSSL
-    OpenSSLError(openssl::error::ErrorStack),
+    SignatureExpired(i64),
+    /// An unsupported algorithm is requested
+    UnknownAlgorithm,
+    /// The requested algorithm is not valid in the desired context
+    InvalidAlgorithm,
     /// The key is not valid for the intended purpose
     InvalidKey,
-    /// The token's _iat_ claim is in the future
-    InvalidIAT,
-    /// The token's _nbf_ claim is in the future
-    InvalidNBF,
-    /// The token's subject claim does not match expected value
-    InvalidSubject,
-    /// The token's issuer claim does not match expected value
-    InvalidIssuer,
-    /// The token's audience claim does not match expected value
-    InvalidAudience,
+    /// One or more errors occurred in OpenSSL
+    OpenSSLError(openssl::error::ErrorStack),
+    /// Validation of a claim has failed
+    InvalidClaim(String, String),
     /// Error converting some kind of data to an UTF-8 string
     ConversionError(Utf8Error),
     /// Error parsing JSON data
@@ -64,157 +57,110 @@ pub enum ErrorKind {
     /// Error decoding some base64 data
     Base64Error(base64::DecodeError),
     /// A generic error if no other fits
-    GenericError,
+    GenericError(String),
     #[doc(hidden)]
     __Nonexhaustive,
 }
 
-/// Structure representing an error
-#[derive(Debug)]
-pub struct Error {
-    /// The kind of error
-    pub kind: ErrorKind,
-    /// Descriptive error message
-    pub message: String,
-}
-
-impl Error {
-    /// Creates a new instance of `Error`.
-    /// # Arguments
-    /// * `k` - The kind of error
-    /// * `msg` - A message describing the error
-    /// # Returns
-    /// A new instance of `Error`
-    pub fn new<T>(k: ErrorKind, msg: T) -> Self where T: Into<String> {
-        Error { kind: k, message: msg.into() }
-    }
-
-    /// Creates a new instance of `Error` without specifying a custom error
-    /// message.
-    /// # Arguments
-    /// * `k` - The kind of error
-    /// # Returns
-    /// A new instance of `Error`
-    pub fn new_without_msg(k: ErrorKind) -> Self {
-        Error {kind: k, message: String::default()}
-    }
-
-    /// Creates a new instance of `Error` for generic errors (kind
-    /// `GenericError`) using the message specified in `msg`.
-    /// # Arguments
-    /// * `msg` - A message describing the error
-    /// # Returns
-    /// A new instance of `Error`
-    pub fn generic<T>(msg: T) -> Self where T: Into<String> {
-        Error { kind: ErrorKind::GenericError, message: msg.into() }
-    }
-}
-
-impl std::fmt::Display for Error {
+impl std::fmt::Display for JwtError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self.kind {
-            ErrorKind::ConversionError(ref e)   => e.fmt(f),
-            ErrorKind::JsonParseError(ref e)    => e.fmt(f),
-            ErrorKind::Base64Error(ref e)       => e.fmt(f),
-            ErrorKind::OpenSSLError(ref e)      => write!(f, "OpenSSL error: {}", e.errors()[0].reason().unwrap_or("")),
-            _                                   => write!(f, "{}", self.message),
+        match self {
+            JwtError::ConversionError(ref e)    => e.fmt(f),
+            JwtError::JsonParseError(ref e)     => e.fmt(f),
+            JwtError::Base64Error(ref e)        => e.fmt(f),
+            JwtError::OpenSSLError(ref e)       => write!(f, "OpenSSL error: {}", e.errors()[0].reason().unwrap_or("")),
+            JwtError::GenericError(ref msg)     => write!(f, "{}", msg),
+            JwtError::InvalidSignature          => write!(f, "The token's signature is not valid."),
+            JwtError::InvalidTokenFormat        => write!(f, "The specified JWT is badly formatted."),
+            JwtError::UnknownAlgorithm          => write!(f, "The requested algorithm is not known or not supported."),
+            JwtError::InvalidAlgorithm          => write!(f, "The requested algorithm is not valid in this context."),
+            JwtError::InvalidKey                => write!(f, "This key is not valid for the requested algorithm."),
+            JwtError::InvalidClaim(ref c, ref v)    => write!(f, "The claim \"{}\" (value: \"{}\") is not valid.", c, v),
+            JwtError::SignatureExpired(t)   => {
+                let time = chrono::NaiveDateTime::from_timestamp(*t, 0);
+                let time: chrono::DateTime<chrono::Utc> = chrono::DateTime::from_utc(time, chrono::Utc);
+                write!(f, "The token's signature expired on {}.", time.to_rfc2822())
+            },
+            #[allow(non_snake_case)]
+            __Nonexhaustive                     => unreachable!(),
         }
     }
 }
 
-impl StdError for Error {
+impl std::error::Error for JwtError {
     fn description(&self) -> &str {
-        match self.kind {
-            ErrorKind::ConversionError(_)       => "failed to convert data to UTF-8 string",
-            ErrorKind::Base64Error(_)           => "failed to decode Base64 data",
-            ErrorKind::JsonParseError(_)        => "failed to parse JSON data",
-            ErrorKind::OpenSSLError(_)          => "an error occurred in OpenSSL",
-            ErrorKind::InvalidKey               => "the key is not valid for the intended use",
-            ErrorKind::InvalidAudience          => "the token's \"aud\" claim is not valid",
-            ErrorKind::InvalidIssuer            => "the token's \"iss\" claim is not valid",
-            ErrorKind::InvalidSubject           => "the token's \"sub\" claim is not valid",
-            ErrorKind::InvalidTokenFormat       => "the data format is not valid for JWTs",
-            ErrorKind::InvalidSignature         => "the signature is not valid for the token's payload",
-            ErrorKind::InvalidIAT               => "the token's \"iat\" claim lies in the future",
-            ErrorKind::InvalidNBF               => "the token's \"nbf\" claim lies in the future",
-            ErrorKind::SignatureExpired         => "the token's signature has expired",
-            ErrorKind::UnkownAlgorithm          => "the requested algorithm is not supported or unkown",
-            ErrorKind::GenericError             => "an error has occurred",
-            _                                   => "an error has occurred",
+        match self {
+            JwtError::ConversionError(_)        => "failed to convert data to UTF-8 string",
+            JwtError::Base64Error(_)            => "failed to decode Base64 data",
+            JwtError::JsonParseError(_)         => "failed to parse JSON data",
+            JwtError::OpenSSLError(_)           => "an error occurred in OpenSSL",
+            JwtError::InvalidKey                => "the key is not valid for the intended use",
+            JwtError::InvalidClaim(_, _)        => "the token contains an invalid claim",
+            JwtError::InvalidTokenFormat        => "the data format is not valid for JWTs",
+            JwtError::InvalidSignature          => "the signature is not valid for the token's payload",
+            JwtError::SignatureExpired(_)       => "the token's signature has expired",
+            JwtError::UnknownAlgorithm          => "the requested algorithm is not supported or unkown",
+            JwtError::InvalidAlgorithm          => "the requested algorithm is not valid for this use case",
+            JwtError::GenericError(_)           => "an error occurred",
+            _                                   => "an error occurred",
         }
     }
 
     fn cause(&self) -> Option<&std::error::Error> {
-        match self.kind {
-            ErrorKind::ConversionError(ref e)   => Some(e),
-            ErrorKind::JsonParseError(ref e)    => Some(e),
-            ErrorKind::Base64Error(ref e)       => Some(e),
-            ErrorKind::OpenSSLError(ref e)      => Some(e),
-            _                                   => None,
+        match self {
+            JwtError::ConversionError(ref e)   => Some(e),
+            JwtError::JsonParseError(ref e)    => Some(e),
+            JwtError::Base64Error(ref e)       => Some(e),
+            JwtError::OpenSSLError(ref e)      => Some(e),
+            _                                  => None,
         }
     }
 }
 
-// Construction of error from a tuple
-impl<T> From<(ErrorKind, T)> for Error where T: Into<String> {
-    fn from((e, desc): (ErrorKind, T)) -> Self  {
-        Error { kind: e, message: desc.into() }
-    }
-}
-
-impl From<openssl::error::ErrorStack> for Error {
+impl From<openssl::error::ErrorStack> for JwtError {
     fn from(e: openssl::error::ErrorStack) -> Self {
-        Error::new_without_msg(ErrorKind::OpenSSLError(e))
+        JwtError::OpenSSLError(e)
     }
 }
 
-impl From<Utf8Error> for Error {
+impl From<Utf8Error> for JwtError {
     fn from(e: Utf8Error) -> Self {
-        Error::new_without_msg(ErrorKind::ConversionError(e))
+        JwtError::ConversionError(e)
     }
 }
 
-impl From<base64::DecodeError> for Error {
+impl From<base64::DecodeError> for JwtError {
     fn from(e: base64::DecodeError) -> Self {
-        Error::new_without_msg(ErrorKind::Base64Error(e))
+        JwtError::Base64Error(e)
     }
 }
 
-impl From<serde_json::Error> for Error {
+impl From<serde_json::Error> for JwtError {
     fn from(e: serde_json::Error) -> Self {
-        Error::new_without_msg(ErrorKind::JsonParseError(e))
+        JwtError::JsonParseError(e)
+    }
+}
+
+// manuall implementation as derive is not possible due to some encapsulated
+// errors do not implement PartialEq
+impl PartialEq for JwtError {
+    fn eq(&self, other: &Self) -> bool {
+        use JwtError::*;
+        match (self, other) {
+            (InvalidSignature, InvalidSignature)        => true,
+            (InvalidTokenFormat, InvalidTokenFormat)    => true,
+            (SignatureExpired(a), SignatureExpired(b))  => a == b,
+            (UnknownAlgorithm, UnknownAlgorithm)        => true,
+            (InvalidAlgorithm, InvalidAlgorithm)        => true,
+            (InvalidKey, InvalidKey)                    => true,
+            (ConversionError(a), ConversionError(b))    => a == b,
+            (Base64Error(a), Base64Error(b))            => a == b,
+            (GenericError(a), GenericError(b))          => a == b,
+            (InvalidClaim(a, _), InvalidClaim(b, _))    => a == b,
+            _   => false
+        }
     }
 }
 
 /// Type alias for convenience
-pub type Result<T> = std::result::Result<T, Error>;
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn create_error() {
-        let e = Error::new(ErrorKind::InvalidTokenFormat, "foobar");
-        assert!(e.description().len() > 0);
-        assert_eq!(e.message, "foobar");
-        assert!(match e.kind { ErrorKind::InvalidTokenFormat => true, _ => false });
-    }
-
-    #[test]
-    fn create_generic_error() {
-        let e = Error::generic("foobar");
-        assert!(e.description().len() > 0);
-        assert_eq!(e.message, "foobar");
-        assert!(match e.kind { ErrorKind::GenericError => true, _ => false });
-    }
-
-    #[test]
-    fn create_from_tuple() {
-        let e = Error::from((ErrorKind::SignatureExpired, "foobar"));
-        assert!(e.description().len() > 0);
-        assert_eq!(e.message, "foobar");
-        assert!(match e.kind { ErrorKind::SignatureExpired => true, _ => false });
-    }
-
-}
+pub type JwtResult<T> = std::result::Result<T, JwtError>;
