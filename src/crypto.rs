@@ -22,7 +22,7 @@
 
 //! Defines the cryptographic operations used for signing and verifying
 //! signatures used by JWTs. Essentially wraps the respective functions
-//! provided by `ring`.
+//! provided by `openssl`.
 
 use crate::errors::{JwtError, JwtResult};
 use base64;
