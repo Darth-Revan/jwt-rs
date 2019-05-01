@@ -26,6 +26,12 @@
 use std::str::Utf8Error;
 use std::error::Error as StdError;
 
+macro_rules! fail {
+    ($k:expr, $msg:expr) => {
+        return Err(crate::errors::Error::new($k, $msg));
+    };
+}
+
 /// Enumeration of error types
 #[derive(Debug)]
 pub enum ErrorKind {
@@ -37,6 +43,10 @@ pub enum ErrorKind {
     UnkownAlgorithm,
     /// The token has expired (_exp_ claim)
     SignatureExpired,
+    /// One or more errors occurred in OpenSSL
+    OpenSSLError(openssl::error::ErrorStack),
+    /// The key is not valid for the intended purpose
+    InvalidKey,
     /// The token's _iat_ claim is in the future
     InvalidIAT,
     /// The token's _nbf_ claim is in the future
@@ -106,6 +116,7 @@ impl std::fmt::Display for Error {
             ErrorKind::ConversionError(ref e)   => e.fmt(f),
             ErrorKind::JsonParseError(ref e)    => e.fmt(f),
             ErrorKind::Base64Error(ref e)       => e.fmt(f),
+            ErrorKind::OpenSSLError(ref e)      => write!(f, "OpenSSL error: {}", e.errors()[0].reason().unwrap_or("")),
             _                                   => write!(f, "{}", self.message),
         }
     }
@@ -117,6 +128,8 @@ impl StdError for Error {
             ErrorKind::ConversionError(_)       => "failed to convert data to UTF-8 string",
             ErrorKind::Base64Error(_)           => "failed to decode Base64 data",
             ErrorKind::JsonParseError(_)        => "failed to parse JSON data",
+            ErrorKind::OpenSSLError(_)          => "an error occurred in OpenSSL",
+            ErrorKind::InvalidKey               => "the key is not valid for the intended use",
             ErrorKind::InvalidAudience          => "the token's \"aud\" claim is not valid",
             ErrorKind::InvalidIssuer            => "the token's \"iss\" claim is not valid",
             ErrorKind::InvalidSubject           => "the token's \"sub\" claim is not valid",
@@ -136,6 +149,7 @@ impl StdError for Error {
             ErrorKind::ConversionError(ref e)   => Some(e),
             ErrorKind::JsonParseError(ref e)    => Some(e),
             ErrorKind::Base64Error(ref e)       => Some(e),
+            ErrorKind::OpenSSLError(ref e)      => Some(e),
             _                                   => None,
         }
     }
@@ -145,6 +159,12 @@ impl StdError for Error {
 impl<T> From<(ErrorKind, T)> for Error where T: Into<String> {
     fn from((e, desc): (ErrorKind, T)) -> Self  {
         Error { kind: e, message: desc.into() }
+    }
+}
+
+impl From<openssl::error::ErrorStack> for Error {
+    fn from(e: openssl::error::ErrorStack) -> Self {
+        Error::new_without_msg(ErrorKind::OpenSSLError(e))
     }
 }
 
