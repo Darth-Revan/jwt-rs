@@ -561,6 +561,17 @@ mod tests {
         }
 
         #[test]
+        fn fail_stripped_signature() -> Result<()> {
+            let key = b"secret";
+            let message = "Hello World";
+            let signature = sign(message, key, JsonWebAlgorithm::HS256)?;
+            assert!(!signature.is_empty());
+            assert!(signature.is_ascii());
+            assert!(!verify("", message, key, JsonWebAlgorithm::HS256)?);
+            Ok(())
+        }
+
+        #[test]
         fn fail_wrong_key() -> Result<()> {
             let key = b"mysupersecretkey";
             let message = "Hello World";
@@ -625,6 +636,16 @@ mod tests {
             assert!(!signature.is_empty());
             assert!(signature.is_ascii());
             assert!(verify(&signature, message, PUBLIC_KEY.as_bytes(), JsonWebAlgorithm::RS256)?);
+            Ok(())
+        }
+
+        #[test]
+        fn fail_stripped_signature() -> Result<()> {
+            let message = "Hello World";
+            let signature = sign(message, PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::RS256)?;
+            assert!(!signature.is_empty());
+            assert!(signature.is_ascii());
+            assert!(!verify("", message, PUBLIC_KEY.as_bytes(), JsonWebAlgorithm::RS256)?);
             Ok(())
         }
 
@@ -706,6 +727,16 @@ mod tests {
         }
 
         #[test]
+        fn fail_stripped_signature() -> Result<()> {
+            let message = "Hello World";
+            let signature = sign(message, PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::PS256)?;
+            assert!(!signature.is_empty());
+            assert!(signature.is_ascii());
+            assert!(!verify("", message, PUBLIC_KEY.as_bytes(), JsonWebAlgorithm::PS256)?);
+            Ok(())
+        }
+
+        #[test]
         fn fail_wrong_verification_key() -> Result<()> {
             let message = "Hello World";
             let signature = sign(message, PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::PS256)?;
@@ -782,6 +813,16 @@ mod tests {
             assert!(!signature.is_empty());
             assert!(signature.is_ascii());
             assert!(verify(&signature, message, PUBLIC_KEY.as_bytes(), JsonWebAlgorithm::ES256)?);
+            Ok(())
+        }
+
+        #[test]
+        fn fail_stripped_signature() -> Result<()> {
+            let message = "Hello World";
+            let signature = sign(message, PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::ES256)?;
+            assert!(!signature.is_empty());
+            assert!(signature.is_ascii());
+            assert!(verify("", message, PUBLIC_KEY.as_bytes(), JsonWebAlgorithm::ES256).is_err());
             Ok(())
         }
 
@@ -867,6 +908,16 @@ mod tests {
             assert!(!signature.is_empty());
             assert!(signature.is_ascii());
             assert!(verify(&signature, message, PUBLIC_KEY.as_bytes(), JsonWebAlgorithm::ES512)?);
+            Ok(())
+        }
+
+        #[test]
+        fn fail_stripped_signature() -> Result<()> {
+            let message = "Hello World";
+            let signature = sign(message, PRIVATE_KEY.as_bytes(), JsonWebAlgorithm::ES512)?;
+            assert!(!signature.is_empty());
+            assert!(signature.is_ascii());
+            assert!(verify("", message, PUBLIC_KEY.as_bytes(), JsonWebAlgorithm::ES512).is_err());
             Ok(())
         }
 
