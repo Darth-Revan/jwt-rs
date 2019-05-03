@@ -325,7 +325,7 @@ fn verify_rsa_pkcs(algo: JsonWebAlgorithm, key: &[u8], input: &str, signature: &
     let mut verifier = sign::Verifier::new(algo, &key)?;
     verifier.set_rsa_padding(rsa::Padding::PKCS1)?;
     verifier.update(input.as_bytes())?;
-    verifier.verify(&signature).map_err(|e| JwtError::OpenSSLError(e))
+    verifier.verify(&signature).map_err(JwtError::OpenSSLError)
 }
 
 /// Verifies a signature creating using the RSA PSS algorithm.
@@ -366,7 +366,7 @@ fn verify_rsa_pss(algo: JsonWebAlgorithm, key: &[u8], input: &str, signature: &s
     verifier.set_rsa_pss_saltlen(sign::RsaPssSaltlen::DIGEST_LENGTH)?;
     verifier.set_rsa_mgf1_md(algo)?;
     verifier.update(input.as_bytes())?;
-    verifier.verify(&signature).map_err(|e| JwtError::OpenSSLError(e))
+    verifier.verify(&signature).map_err(JwtError::OpenSSLError)
 }
 
 #[cfg(not(feature = "no-ecdsa"))]
@@ -420,7 +420,7 @@ fn verify_ecdsa(algo: JsonWebAlgorithm, key: &[u8], input: &str, signature: &str
 
     let signature = EcdsaSig::from_private_components(r, s)?;
     let data = hash::hash(hash_algo, input.as_bytes())?;
-    signature.verify(&data, &public_key).map_err(|e| JwtError::OpenSSLError(e))
+    signature.verify(&data, &public_key).map_err(JwtError::OpenSSLError)
 }
 
 /// Creates and returns a digital signature on some input using a JSON Web
