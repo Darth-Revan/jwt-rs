@@ -23,8 +23,6 @@
 //! Defines a wrapper structure around all the possible errors that may occur
 //! when using this library.
 
-use std::str::Utf8Error;
-
 macro_rules! fail {
     ($e:expr) => {
         return Err($e);
@@ -39,7 +37,9 @@ pub enum JwtError {
     /// The signature is not valid for the payload
     InvalidSignature,
     /// The token has expired (_exp_ claim)
-    SignatureExpired(i64),
+    TokenExpired(i64),
+    /// The token is not valid yet (current time before _nbf_ claim)
+    TokenNotYetValid(i64),
     /// An unsupported algorithm is requested
     UnknownAlgorithm,
     /// The requested algorithm is not valid in the desired context
@@ -51,7 +51,7 @@ pub enum JwtError {
     /// Validation of a claim has failed
     InvalidClaim(String, String),
     /// Error converting some kind of data to an UTF-8 string
-    ConversionError(Utf8Error),
+    ConversionError(std::string::FromUtf8Error),
     /// Error parsing JSON data
     JsonParseError(serde_json::Error),
     /// Error decoding some base64 data
@@ -64,10 +64,11 @@ pub enum JwtError {
 
 impl std::fmt::Display for JwtError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        #![allow(non_snake_case)]
         match self {
-            JwtError::ConversionError(ref e)    => e.fmt(f),
-            JwtError::JsonParseError(ref e)     => e.fmt(f),
-            JwtError::Base64Error(ref e)        => e.fmt(f),
+            JwtError::ConversionError(ref e)    => write!(f, "Error converting UTF-8 data: {}", e),
+            JwtError::JsonParseError(ref e)     => write!(f, "Error parsing JSON data: {}", e),
+            JwtError::Base64Error(ref e)        => write!(f, "Error decoding Base64 data: {}", e),
             JwtError::OpenSSLError(ref e)       => write!(f, "OpenSSL error: {}", e.errors()[0].reason().unwrap_or("")),
             JwtError::GenericError(ref msg)     => write!(f, "{}", msg),
             JwtError::InvalidSignature          => write!(f, "The token's signature is not valid."),
@@ -76,12 +77,16 @@ impl std::fmt::Display for JwtError {
             JwtError::InvalidAlgorithm          => write!(f, "The requested algorithm is not valid in this context."),
             JwtError::InvalidKey                => write!(f, "This key is not valid for the requested algorithm."),
             JwtError::InvalidClaim(ref c, ref v)    => write!(f, "The claim \"{}\" (value: \"{}\") is not valid.", c, v),
-            JwtError::SignatureExpired(t)   => {
+            JwtError::TokenExpired(t)   => {
                 let time = chrono::NaiveDateTime::from_timestamp(*t, 0);
                 let time: chrono::DateTime<chrono::Utc> = chrono::DateTime::from_utc(time, chrono::Utc);
-                write!(f, "The token's signature expired on {}.", time.to_rfc2822())
+                write!(f, "The token expired on {}.", time.to_rfc2822())
             },
-            #[allow(non_snake_case)]
+            JwtError::TokenNotYetValid(t)   => {
+                let time = chrono::NaiveDateTime::from_timestamp(*t, 0);
+                let time: chrono::DateTime<chrono::Utc> = chrono::DateTime::from_utc(time, chrono::Utc);
+                write!(f, "The token is not valid before {}.", time.to_rfc2822())
+            },
             __Nonexhaustive                     => unreachable!(),
         }
     }
@@ -98,7 +103,8 @@ impl std::error::Error for JwtError {
             JwtError::InvalidClaim(_, _)        => "the token contains an invalid claim",
             JwtError::InvalidTokenFormat        => "the data format is not valid for JWTs",
             JwtError::InvalidSignature          => "the signature is not valid for the token's payload",
-            JwtError::SignatureExpired(_)       => "the token's signature has expired",
+            JwtError::TokenExpired(_)       => "the token has expired",
+            JwtError::TokenNotYetValid(_)   => "the token is not yet valid",
             JwtError::UnknownAlgorithm          => "the requested algorithm is not supported or unkown",
             JwtError::InvalidAlgorithm          => "the requested algorithm is not valid for this use case",
             JwtError::GenericError(_)           => "an error occurred",
@@ -123,8 +129,8 @@ impl From<openssl::error::ErrorStack> for JwtError {
     }
 }
 
-impl From<Utf8Error> for JwtError {
-    fn from(e: Utf8Error) -> Self {
+impl From<std::string::FromUtf8Error> for JwtError {
+    fn from(e: std::string::FromUtf8Error) -> Self {
         JwtError::ConversionError(e)
     }
 }
@@ -149,11 +155,11 @@ impl PartialEq for JwtError {
         match (self, other) {
             (InvalidSignature, InvalidSignature)        => true,
             (InvalidTokenFormat, InvalidTokenFormat)    => true,
-            (SignatureExpired(a), SignatureExpired(b))  => a == b,
+            (TokenExpired(a), TokenExpired(b))  => a == b,
+            (TokenNotYetValid(a), TokenNotYetValid(b))  => a == b,
             (UnknownAlgorithm, UnknownAlgorithm)        => true,
             (InvalidAlgorithm, InvalidAlgorithm)        => true,
             (InvalidKey, InvalidKey)                    => true,
-            (ConversionError(a), ConversionError(b))    => a == b,
             (Base64Error(a), Base64Error(b))            => a == b,
             (GenericError(a), GenericError(b))          => a == b,
             (InvalidClaim(a, _), InvalidClaim(b, _))    => a == b,
