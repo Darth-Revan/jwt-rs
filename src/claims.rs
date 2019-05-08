@@ -29,6 +29,9 @@ use std::collections::HashMap;
 
 use crate::errors::{JwtResult, JwtError};
 
+/// Array containing the names of registred claims according to RFC 7519
+pub const REGISTERED_CLAIM_NAMES: [&'static str; 7] = ["iss", "sub", "aud", "exp", "nbf", "iat", "jti"];
+
 /// Structure containing all well-known registered claims according to RFC 7519
 /// and a map for additional, custom claims.
 /// The audience claim has to be set through the respective method of this struct.
@@ -40,7 +43,7 @@ use crate::errors::{JwtResult, JwtError};
 /// claims.sub = Some("Foobar".to_string());
 /// claims.iat = Some(42);
 /// claims.set_audience(&"MyAudience");
-/// claims.custom.insert("abc".to_string(), json!("XYZ"));
+/// claims.set_custom_claim("abc", &"XYZ");
 ///
 /// // serialize claims
 /// let s = serde_json::to_string(&claims).unwrap();
@@ -76,9 +79,10 @@ pub struct Claims {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub jti: Option<String>,
     /// HashMap for custom claims that will be serialized and deserialized
-    /// next to the registered ones
+    /// next to the registered ones; this is not public, as setting a key to
+    /// a registered claim name will duplicate this claim which is not allowed
     #[serde(flatten, skip_serializing_if = "HashMap::is_empty")]
-    pub custom: HashMap<String, JValue>,
+    custom: HashMap<String, JValue>,
 }
 
 /// Parses an optional JSON value by wrapping it and deserializing the wrapped
@@ -212,6 +216,33 @@ impl Claims {
     /// The current value of the `aud` claim
     pub fn get_audience(&self) -> &Option<JValue> {
         &self.aud
+    }
+
+    /// Sets a custom claim identified by `key` to a serializable value.
+    /// This method only allows keys which do not reflect a registered claim
+    /// (this could allow duplicate claims which is not RFC compliant).
+    /// # Arguments
+    /// * `key` - The name of the claim to add (must not be a registered claim)
+    /// * `value` - Serializable value of the claim
+    /// # Returns
+    /// The unit type on success, an error on failure
+    /// # Errors
+    /// This function returns an error if `key` reflects a registered claim
+    /// (see [REGISTERED_CLAIM_NAMES](constant.REGISTERED_CLAIM_NAMES.html))
+    pub fn set_custom_claim<T: Serialize>(&mut self, key: &str, value: &T) -> JwtResult<()> {
+        let key = key.to_lowercase();
+        if REGISTERED_CLAIM_NAMES.contains(&key.as_str()) {
+            fail!(JwtError::GenericError("Setting a registered claim via custom claim structure is not allowed.".to_string()));
+        }
+        self.custom.insert(key, serde_json::to_value(value)?);
+        Ok(())
+    }
+
+    /// Returns a map of the current state of custom claims.
+    /// # Returns
+    /// Reference to the current custom claim map
+    pub fn get_custom_claims(&self) -> &HashMap<String, JValue> {
+        &self.custom
     }
 }
 
