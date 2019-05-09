@@ -231,6 +231,9 @@ impl Claims {
     /// (see [REGISTERED_CLAIM_NAMES](constant.REGISTERED_CLAIM_NAMES.html))
     pub fn set_custom_claim<T: Serialize>(&mut self, key: &str, value: &T) -> JwtResult<()> {
         let key = key.to_lowercase();
+        if key.is_empty() {
+            fail!(JwtError::GenericError("Empty names for claims are not allowed.".to_string()));
+        }
         if REGISTERED_CLAIM_NAMES.contains(&key.as_str()) {
             fail!(JwtError::GenericError("Setting a registered claim via custom claim structure is not allowed.".to_string()));
         }
