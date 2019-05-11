@@ -76,3 +76,27 @@ impl Default for JwtHeader {
         JwtHeader::new(JsonWebAlgorithm::default())
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn create_new() {
+        let header = JwtHeader::new(JsonWebAlgorithm::PS512);
+        assert_eq!(header.alg, JsonWebAlgorithm::PS512);
+        assert_eq!(header.typ.unwrap(), "JWT".to_string());
+        assert!(header.cty.is_none());
+        assert!(header.kid.is_none());
+    }
+
+    #[test]
+    fn create_default() {
+        let header = JwtHeader::default();
+        assert_eq!(header.alg, JsonWebAlgorithm::HS256);
+        assert_eq!(header.typ.unwrap(), "JWT".to_string());
+        assert!(header.cty.is_none());
+        assert!(header.kid.is_none());
+    }
+
+}

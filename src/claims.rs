@@ -247,6 +247,16 @@ impl Claims {
     pub fn get_custom_claims(&self) -> &HashMap<String, JValue> {
         &self.custom
     }
+
+    /// Returns the value of a specific custom claim, if any.
+    /// # Arguments
+    /// * `key` - The key of the custom claim to return the value of
+    /// # Returns
+    /// The value of the specified claim or a `None` value if the claim could
+    /// not be found
+    pub fn get_custom_claim(&self, key: &str) -> Option<&JValue> {
+        self.custom.get(key)
+    }
 }
 
 /// A structure used to automatically validate registered claims. Custom claims
@@ -524,6 +534,30 @@ mod tests {
         fn init_claims_invalid_audience() {
             let mut claims = Claims::default();
             assert!(claims.set_audience(&42).is_err());
+        }
+
+        #[test]
+        fn set_get_custom_claims() -> JwtResult<()> {
+            let s = "{\"sub\":\"test\",\"aud\":\"John\",\"custom1\":42,\"custom2\":\"foo\"}";
+            let claims = serde_json::from_str::<Claims>(s)?;
+            let custom1 = claims.get_custom_claim("custom1").unwrap();
+            let custom2 = claims.get_custom_claim("custom2").unwrap();
+            assert_eq!(custom1, 42);
+            assert_eq!(custom2, "foo");
+
+            let customs = claims.get_custom_claims();
+            assert_eq!(customs["custom1"], 42);
+            assert_eq!(customs["custom2"], "foo");
+
+            assert!(claims.get_custom_claim("custom3").is_none());
+            let mut claims = claims;
+            claims.set_custom_claim("custom3", &true)?;
+            assert_eq!(claims.get_custom_claim("custom3").unwrap(), true);
+
+            assert_eq!(claims.sub.clone().unwrap(), "test");
+            assert!(claims.set_custom_claim("sub", &"hacked").is_err()); // yeah, nice try
+            assert_eq!(claims.sub.unwrap(), "test");
+            Ok(())
         }
     }
 

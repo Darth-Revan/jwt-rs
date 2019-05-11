@@ -77,7 +77,7 @@ impl std::fmt::Display for JwtError {
             JwtError::InvalidAlgorithm          => write!(f, "The requested algorithm is not valid in this context."),
             JwtError::InvalidKey                => write!(f, "This key is not valid for the requested algorithm."),
             JwtError::InvalidClaim(ref c, ref v)    => write!(f, "The claim \"{}\" (value: \"{}\") is not valid.", c, v),
-            JwtError::TokenExpired(t)   => {
+            JwtError::TokenExpired(t)       => {
                 let time = chrono::NaiveDateTime::from_timestamp(*t, 0);
                 let time: chrono::DateTime<chrono::Utc> = chrono::DateTime::from_utc(time, chrono::Utc);
                 write!(f, "The token expired on {}.", time.to_rfc2822())
@@ -95,30 +95,31 @@ impl std::fmt::Display for JwtError {
 impl std::error::Error for JwtError {
     fn description(&self) -> &str {
         match self {
-            JwtError::ConversionError(_)        => "failed to convert data to UTF-8 string",
-            JwtError::Base64Error(_)            => "failed to decode Base64 data",
-            JwtError::JsonParseError(_)         => "failed to parse JSON data",
-            JwtError::OpenSSLError(_)           => "an error occurred in OpenSSL",
-            JwtError::InvalidKey                => "the key is not valid for the intended use",
-            JwtError::InvalidClaim(_, _)        => "the token contains an invalid claim",
-            JwtError::InvalidTokenFormat        => "the data format is not valid for JWTs",
-            JwtError::InvalidSignature          => "the signature is not valid for the token's payload",
+            JwtError::ConversionError(_)    => "failed to convert data to UTF-8 string",
+            JwtError::Base64Error(_)        => "failed to decode Base64 data",
+            JwtError::JsonParseError(_)     => "failed to parse JSON data",
+            JwtError::OpenSSLError(_)       => "an error occurred in OpenSSL",
+            JwtError::InvalidKey            => "the key is not valid for the intended use",
+            JwtError::InvalidClaim(_, _)    => "the token contains an invalid claim",
+            JwtError::InvalidTokenFormat    => "the data format is not valid for JWTs",
+            JwtError::InvalidSignature      => "the signature is not valid for the token's payload",
             JwtError::TokenExpired(_)       => "the token has expired",
             JwtError::TokenNotYetValid(_)   => "the token is not yet valid",
-            JwtError::UnknownAlgorithm          => "the requested algorithm is not supported or unkown",
-            JwtError::InvalidAlgorithm          => "the requested algorithm is not valid for this use case",
-            JwtError::GenericError(_)           => "an error occurred",
-            _                                   => "an error occurred",
+            JwtError::UnknownAlgorithm      => "the requested algorithm is not supported or unkown",
+            JwtError::InvalidAlgorithm      => "the requested algorithm is not valid for this use case",
+            JwtError::GenericError(_)       => "an error occurred",
+            _                               => "an error occurred",
         }
     }
 
-    fn cause(&self) -> Option<&std::error::Error> {
+    // replaces cause() since Rust 1.33.0
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            JwtError::ConversionError(ref e)   => Some(e),
-            JwtError::JsonParseError(ref e)    => Some(e),
-            JwtError::Base64Error(ref e)       => Some(e),
-            JwtError::OpenSSLError(ref e)      => Some(e),
-            _                                  => None,
+            JwtError::ConversionError(ref e)    => Some(e),
+            JwtError::JsonParseError(ref e)     => Some(e),
+            JwtError::Base64Error(ref e)        => Some(e),
+            JwtError::OpenSSLError(ref e)       => Some(e),
+            _                                   => None
         }
     }
 }
@@ -170,3 +171,36 @@ impl PartialEq for JwtError {
 
 /// Type alias for convenience
 pub type JwtResult<T> = std::result::Result<T, JwtError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::error::Error;
+
+    #[test]
+    fn create_and_output_error() {
+        let error = JwtError::TokenExpired(0);
+        let msg = error.to_string();
+        assert!(msg.contains("1 Jan 1970 00:00:00 +0000"));
+        assert!(error.source().is_none());
+        assert_eq!(error, JwtError::TokenExpired(0));
+        assert_ne!(error, JwtError::TokenExpired(1));
+        assert_ne!(error, JwtError::TokenNotYetValid(0));
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_fail_macro() {
+        fn inner() -> JwtResult<()> {
+            fail!(JwtError::InvalidAlgorithm);
+        }
+        inner().expect("Yep, that's ok.");
+    }
+
+    #[test]
+    fn test_convert_error() {
+        let inner = base64::DecodeError::InvalidByte(42usize, 42u8);
+        let outer: JwtError = inner.into();
+        assert!(outer.to_string().contains("42"));
+    }
+}
